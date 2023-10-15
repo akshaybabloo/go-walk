@@ -19,7 +19,7 @@ import (
 )
 
 func main() {
-    dirStats, err := walk.ListDirStat("node_modules", wd)
+    dirStats, err := walk.ListDirStat("/", "node_modules")
     if err != nil {
         panic(err)
     }
