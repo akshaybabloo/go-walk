@@ -12,7 +12,10 @@ func TestListDirStat(t *testing.T) {
 	// Create a temporary directory structure
 	tmpDir, err := os.MkdirTemp("", "test-list-dir-stat-*")
 	assert.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func(path string) {
+		err := os.RemoveAll(path)
+		assert.NoError(t, err)
+	}(tmpDir)
 
 	nodeModules1 := filepath.Join(tmpDir, "project1", "node_modules")
 	nodeModules2 := filepath.Join(tmpDir, "project2", "node_modules")
@@ -55,7 +58,10 @@ func TestListDirStatNoKeyword(t *testing.T) {
 	// Create a temporary directory structure
 	tmpDir, err := os.MkdirTemp("", "test-list-dir-stat-*")
 	assert.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func(path string) {
+		err := os.RemoveAll(path)
+		assert.NoError(t, err)
+	}(tmpDir)
 
 	nodeModules1 := filepath.Join(tmpDir, "project1", "node_modules")
 	nodeModules2 := filepath.Join(tmpDir, "project2", "node_modules")

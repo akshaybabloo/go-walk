@@ -2,10 +2,10 @@ package go_walk
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,7 +22,7 @@ type DirectoryInfo struct {
 
 // ListDirStat lists directories matching the provided keywords in dirPath
 // and returns their metadata. If no keywords are provided, all directories
-// are matched.
+// are matched. Returns aggregated errors if they occur.
 func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 	pathStat, err := os.Stat(dirPath)
 	if err != nil {
@@ -37,6 +37,7 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 	errChan := make(chan error)
 	var directories []DirectoryInfo
 	var mu sync.Mutex
+	var errStrings []string
 
 	keywordSet := make(map[string]struct{})
 	for _, keyword := range keywords {
@@ -51,7 +52,6 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 		}
 
 		if entry.IsDir() {
-			// If no keywords are provided or the directory name matches one of the keywords
 			_, exists := keywordSet[entry.Name()]
 			if len(keywordSet) == 0 || exists {
 				wg.Add(1)
@@ -80,33 +80,20 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 		close(errChan)
 	}()
 
-	var dirChanClosed, errChanClosed bool
+	for dirStat := range dirChan {
+		mu.Lock()
+		directories = append(directories, dirStat)
+		mu.Unlock()
+	}
 
-LOOP:
-	for {
-		select {
-		case dirStat, ok := <-dirChan:
-			if !ok {
-				dirChanClosed = true
-				if dirChanClosed && errChanClosed {
-					break LOOP
-				}
-				continue
-			}
-			mu.Lock()
-			directories = append(directories, dirStat)
-			mu.Unlock()
-		case e, ok := <-errChan:
-			if !ok {
-				errChanClosed = true
-				if dirChanClosed && errChanClosed {
-					break LOOP
-				}
-				continue
-			}
-			// Logging errors, can be modified to handle differently.
-			fmt.Printf("Error while processing directory: %v\n", e)
-		}
+	for e := range errChan {
+		mu.Lock()
+		errStrings = append(errStrings, e.Error())
+		mu.Unlock()
+	}
+
+	if len(errStrings) > 0 {
+		return directories, errors.New("errors occurred during directory processing: " + strings.Join(errStrings, "; "))
 	}
 
 	return directories, nil
