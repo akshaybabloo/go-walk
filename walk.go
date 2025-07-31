@@ -14,7 +14,6 @@ import (
 type DirectoryInfo struct {
 	Path            string    // Absolute path of the directory.
 	Size            int64     // Size of the directory in bytes.
-	CreationTime    time.Time // When the directory was created.
 	LastModified    time.Time // When the directory was last modified.
 	NumberOfFiles   int       // Number of files in the directory.
 	NumberOfSubdirs int       // Number of subdirectories within the directory.
@@ -33,6 +32,8 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 		return nil, errors.New("the path provided is not a directory")
 	}
 
+	const numWorkers = 8
+	workChan := make(chan string)
 	dirChan := make(chan DirectoryInfo)
 	errChan := make(chan error)
 	var directories []DirectoryInfo
@@ -46,6 +47,21 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 
 	wg := &sync.WaitGroup{}
 
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range workChan {
+				dirStat, err := calculateDirStats(path)
+				if err != nil {
+					errChan <- err
+					continue
+				}
+				dirChan <- dirStat
+			}
+		}()
+	}
+
 	directoryVisitor := func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -54,17 +70,7 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 		if entry.IsDir() {
 			_, exists := keywordSet[entry.Name()]
 			if len(keywordSet) == 0 || exists {
-				wg.Add(1)
-
-				go func(p string) {
-					defer wg.Done()
-					dirStat, err := calculateDirStats(p)
-					if err != nil {
-						errChan <- err
-						return
-					}
-					dirChan <- dirStat
-				}(path)
+				workChan <- path
 			}
 		}
 		return nil
@@ -75,6 +81,7 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 		if err != nil {
 			errChan <- err
 		}
+		close(workChan)
 		wg.Wait()
 		close(dirChan)
 		close(errChan)
@@ -104,10 +111,14 @@ func calculateDirStats(path string) (DirectoryInfo, error) {
 	var totalSize int64
 	var numberOfFiles int
 	var numberOfSubdirs int
-	var creationTime time.Time
-	var lastModified time.Time
 
-	err := filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return DirectoryInfo{}, err
+	}
+	lastModified := info.ModTime()
+
+	err = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -124,14 +135,6 @@ func calculateDirStats(path string) (DirectoryInfo, error) {
 			numberOfFiles++
 		}
 
-		if creationTime.IsZero() || info.ModTime().Before(creationTime) {
-			creationTime = info.ModTime()
-		}
-
-		if lastModified.IsZero() || info.ModTime().After(lastModified) {
-			lastModified = info.ModTime()
-		}
-
 		return nil
 	})
 
@@ -142,9 +145,8 @@ func calculateDirStats(path string) (DirectoryInfo, error) {
 	return DirectoryInfo{
 		Path:            path,
 		Size:            totalSize,
-		CreationTime:    creationTime,
 		LastModified:    lastModified,
 		NumberOfFiles:   numberOfFiles,
-		NumberOfSubdirs: numberOfSubdirs,
+		NumberOfSubdirs: numberOfSubdirs - 1, // Subtract 1 to exclude the parent directory
 	}, nil
 }
