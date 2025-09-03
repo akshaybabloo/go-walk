@@ -2,6 +2,7 @@ package go_walk
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +10,22 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrorList holds a list of errors.
+type ErrorList []error
+
+// Error returns a string representation of the error list.
+func (e ErrorList) Error() string {
+	if len(e) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d errors occurred:\n", len(e)))
+	for _, err := range e {
+		sb.WriteString(fmt.Sprintf("\t- %s\n", err.Error()))
+	}
+	return sb.String()
+}
 
 // DirectoryInfo holds metadata about a directory.
 type DirectoryInfo struct {
@@ -37,8 +54,8 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 	dirChan := make(chan DirectoryInfo)
 	errChan := make(chan error)
 	var directories []DirectoryInfo
+	var errs ErrorList
 	var mu sync.Mutex
-	var errStrings []string
 
 	keywordSet := make(map[string]struct{})
 	for _, keyword := range keywords {
@@ -95,12 +112,12 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 
 	for e := range errChan {
 		mu.Lock()
-		errStrings = append(errStrings, e.Error())
+		errs = append(errs, e)
 		mu.Unlock()
 	}
 
-	if len(errStrings) > 0 {
-		return directories, errors.New("errors occurred during directory processing: " + strings.Join(errStrings, "; "))
+	if len(errs) > 0 {
+		return directories, errs
 	}
 
 	return directories, nil
@@ -118,9 +135,14 @@ func calculateDirStats(path string) (DirectoryInfo, error) {
 	}
 	lastModified := info.ModTime()
 
-	err = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(path, func(subPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+
+		// Skip the root directory itself from being counted as a subdirectory
+		if path == subPath {
+			return nil
 		}
 
 		info, err := entry.Info()
@@ -147,6 +169,6 @@ func calculateDirStats(path string) (DirectoryInfo, error) {
 		Size:            totalSize,
 		LastModified:    lastModified,
 		NumberOfFiles:   numberOfFiles,
-		NumberOfSubdirs: numberOfSubdirs - 1, // Subtract 1 to exclude the parent directory
+		NumberOfSubdirs: numberOfSubdirs,
 	}, nil
 }

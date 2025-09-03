@@ -147,3 +147,56 @@ func TestListDirStatNoKeyword(t *testing.T) {
 	assert.True(t, foundDirs[nodeModules2])
 	assert.True(t, foundDirs[nestedNodeModules])
 }
+
+func TestListDirStatError(t *testing.T) {
+	// Call ListDirStat with a non-existent directory
+	_, err := ListDirStat("/non-existent-directory")
+	assert.Error(t, err)
+
+	// Call ListDirStat with a file
+	tmpFile, err := os.CreateTemp("", "test-file-*")
+	assert.NoError(t, err)
+	defer func(name string) {
+		err := os.Remove(name)
+		assert.NoError(t, err)
+	}(tmpFile.Name())
+
+	_, err = ListDirStat(tmpFile.Name())
+	assert.Error(t, err)
+	assert.Equal(t, "the path provided is not a directory", err.Error())
+}
+
+func TestCalculateDirStats(t *testing.T) {
+	// Create a temporary directory structure
+	tmpDir, err := os.MkdirTemp("", "test-calculate-dir-stats-*")
+	assert.NoError(t, err)
+	defer func(path string) {
+		err := os.RemoveAll(path)
+		assert.NoError(t, err)
+	}(tmpDir)
+
+	// Add a file to the directory
+	testFilePath := filepath.Join(tmpDir, "test.txt")
+	err = os.WriteFile(testFilePath, []byte("test content"), 0644)
+	assert.NoError(t, err)
+
+	// Add a subdirectory
+	subDir := filepath.Join(tmpDir, "sub")
+	err = os.Mkdir(subDir, 0755)
+	assert.NoError(t, err)
+
+	// Add a file to the subdirectory
+	testFilePath2 := filepath.Join(subDir, "test2.txt")
+	err = os.WriteFile(testFilePath2, []byte("test content 2"), 0644)
+	assert.NoError(t, err)
+
+	// Call calculateDirStats
+	dirStat, err := calculateDirStats(tmpDir)
+	assert.NoError(t, err)
+
+	// Check the results
+	assert.Equal(t, tmpDir, dirStat.Path)
+	assert.Equal(t, int64(26), dirStat.Size) // "test content" (12) + "test content 2" (14)
+	assert.Equal(t, 2, dirStat.NumberOfFiles)
+	assert.Equal(t, 1, dirStat.NumberOfSubdirs)
+}
