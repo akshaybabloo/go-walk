@@ -94,26 +94,38 @@ func ListDirStat(dirPath string, keywords ...string) ([]DirectoryInfo, error) {
 	}
 
 	go func() {
+		defer close(workChan)
 		err := filepath.WalkDir(dirPath, directoryVisitor)
 		if err != nil {
 			errChan <- err
 		}
-		close(workChan)
+	}()
+
+	go func() {
 		wg.Wait()
 		close(dirChan)
 		close(errChan)
 	}()
 
-	for dirStat := range dirChan {
-		mu.Lock()
-		directories = append(directories, dirStat)
-		mu.Unlock()
-	}
-
-	for e := range errChan {
-		mu.Lock()
-		errs = append(errs, e)
-		mu.Unlock()
+	for dirChan != nil || errChan != nil {
+		select {
+		case dirStat, ok := <-dirChan:
+			if !ok {
+				dirChan = nil
+				continue
+			}
+			mu.Lock()
+			directories = append(directories, dirStat)
+			mu.Unlock()
+		case e, ok := <-errChan:
+			if !ok {
+				errChan = nil
+				continue
+			}
+			mu.Lock()
+			errs = append(errs, e)
+			mu.Unlock()
+		}
 	}
 
 	if len(errs) > 0 {
